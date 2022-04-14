@@ -1,0 +1,19 @@
+{
+    "mongoRunner": {
+        "connections": [
+            {
+                "name": "class_mongo",
+                "url": "mongodb://34.94.157.136:27017"
+            }
+        ]
+    },
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        ".",
+        "-p",
+        "*_test.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true
+}
