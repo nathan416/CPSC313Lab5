@@ -14,13 +14,15 @@ import pprint as pp
 MESSAGES = ["first"]
 NUM_MESSAGES = 4
 
+
 class TestChatRoomAPI(unittest.TestCase):
     """ Test client for API testing.
         using unittest and the TestCase base class 
     """
+
     def setUp(self):
         logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT, filename='room_chat_test.log')
-    
+
     def test_send(self):
         """ Test sending. This is a very simple placeholder for what would ultimately be quite a few tests for send. We're only testing a trival single send
                 TODO: normally we would test various send patterns:
@@ -36,33 +38,32 @@ class TestChatRoomAPI(unittest.TestCase):
         for loop_control in range(0, NUM_MESSAGES):
             LOGGER.debug(f'Inside loop in test_send, iteration is {loop_control}')
             response = requests.post(f'http://localhost:8000/send?room_name={PUBLIC_ROOM_NAME}&message={TEST_MESSAGE} {loop_control}&from_alias=test&to_alias={USER_ALIAS}')
-            try: 
+            try:
                 self.assertEqual(response.status_code, 201)
-            except: 
+            except:
                 LOGGER.debug(f'test for message number {loop_control} failed. Response status: {response.status_code}. Total response: {response}')
-    
-    
+
     def test_send_empty_message(self):
         """test sending one empty message
         """
         LOGGER.debug("entering test_send_empty_message")
         response = requests.post(f'http://localhost:8000/send?room_name={PUBLIC_ROOM_NAME}&message={TEST_MESSAGE_EMPTY}&from_alias=test&to_alias={USER_ALIAS}')
         self.assertEqual(response.status_code, 200)
-        
+
     def test_send_short_message(self):
         """test sending one short message
         """
         LOGGER.debug("entering test_send_short_message")
         response = requests.post(f'http://localhost:8000/send?room_name={PUBLIC_ROOM_NAME}&message={TEST_MESSAGE_SHORT}&from_alias=test&to_alias={USER_ALIAS}')
         self.assertEqual(response.status_code, 200)
-        
+
     def test_send_long_message(self):
         """test sending one long message
         """
         LOGGER.debug("entering test_send_long_message")
         response = requests.post(f'http://localhost:8000/send?room_name={PUBLIC_ROOM_NAME}&message={TEST_MESSAGE_LONG}&from_alias=test&to_alias={USER_ALIAS}')
         self.assertEqual(response.status_code, 200)
-    
+
     def test_send_number_message(self):
         """test sending one number message
         """
@@ -83,13 +84,13 @@ class TestChatRoomAPI(unittest.TestCase):
         """
         LOGGER.debug('Entering test get method')
         response = requests.get(f'http://localhost:8000/messages?room_name={PUBLIC_ROOM_NAME}&messages_to_get=10')
-        try: 
+        try:
             self.assertEqual(response.status_code, 200)
             message_list = json.loads(response.content)
             for message in message_list:
                 LOGGER.debug(f'Inside loop in test get, message is {message}')
             return response.text
-        except: 
+        except:
             LOGGER.warning(f'test for getting messages failed. Response status: {response.status_code}. Total response: {response}')
 
     def test_send_receive(self):
@@ -114,21 +115,21 @@ class TestChatRoomAPI(unittest.TestCase):
             self.assertIn('test send and receive', message_list)
         except AssertionError as problem:
             LOGGER.warning(f'E2E ERROR:: Inside FULL test. Problem is {problem}')
-    
+
     def test_send_receive_empty_message(self):
         """test sending and receiving one empty message
         """
         LOGGER.debug("entering test_send_empty_message")
         response = requests.post(f'http://localhost:8000/send?room_name={PUBLIC_ROOM_NAME}&message={TEST_MESSAGE_EMPTY}&from_alias=test&to_alias={USER_ALIAS}')
         self.assertEqual(response.status_code, 200)
-        
+
         response2 = requests.get(f'http://localhost:8000/messages?room_name={PUBLIC_ROOM_NAME}&messages_to_get=200')
         LOGGER.debug(f'Inside full test for ChatRoom, get_result is: {response2}')
         self.assertIsNotNone(response2)
         self.assertEqual(response2.status_code, 200)
         message_list = json.loads(response2.content)
         self.assertIn(TEST_MESSAGE_EMPTY, message_list)
-        
+
     def test_send_receive_short_message(self):
         """test sending and receiving one short message
         """
@@ -142,7 +143,7 @@ class TestChatRoomAPI(unittest.TestCase):
         self.assertEqual(response2.status_code, 200)
         message_list = json.loads(response2.content)
         self.assertIn(TEST_MESSAGE_SHORT, message_list)
-        
+
     def test_send_receive_long_message(self):
         """test sending and receiving one long message
         """
@@ -156,7 +157,7 @@ class TestChatRoomAPI(unittest.TestCase):
         self.assertEqual(response2.status_code, 200)
         message_list = json.loads(response2.content)
         self.assertIn(TEST_MESSAGE_LONG, message_list)
-    
+
     def test_send_receive_number_message(self):
         """test sending and receiving one number message
         """
@@ -170,7 +171,7 @@ class TestChatRoomAPI(unittest.TestCase):
         self.assertEqual(response2.status_code, 200)
         message_list = json.loads(response2.content)
         self.assertIn(TEST_MESSAGE_NUMBERS, message_list)
-        
+
     def test_get_users(self):
         """testing the api get call to /users
         """
@@ -178,14 +179,14 @@ class TestChatRoomAPI(unittest.TestCase):
         response = requests.get(f'http://localhost:8000/users/')
         LOGGER.debug(response.content)
         self.assertEqual(response.status_code, 200)
-    
+
     def test_register_users(self):
         """testing the api post call to /alias
         """
         LOGGER.debug("entering test_register_users")
         response = requests.post(f'http://localhost:8000/alias?client_alias={USER_ALIAS}/')
         self.assertEqual(response.status_code, 201)
-    
+
     def test_room_create(self):
         """testing the api post call to /room
         """
@@ -193,9 +194,6 @@ class TestChatRoomAPI(unittest.TestCase):
         response = requests.post(f'http://localhost:8000/room?room_name={PUBLIC_ROOM_NAME}&owner_alias={USER_ALIAS}&room_type={ROOM_TYPE_PUBLIC}')
         self.assertEqual(response.status_code, 201)
 
+
 if __name__ == "__main__":
     unittest.main()
-            
-
-        
-

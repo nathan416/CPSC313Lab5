@@ -52,8 +52,7 @@ class Test_ChatRoom(unittest.TestCase):
         )
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE, mess_props))
         LOGGER.debug(pp.pformat(f'sent message \'{TEST_MESSAGE}\''))
-        
-        
+
     def test_send_empty_message(self):
         """test sending one empty message
         """
@@ -69,8 +68,7 @@ class Test_ChatRoom(unittest.TestCase):
         )
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE_EMPTY, mess_props))
         LOGGER.debug(pp.pformat(f'sent message \'{TEST_MESSAGE_EMPTY}\''))
-        
-        
+
     def test_send_short_message(self):
         """test sending one short message
         """
@@ -86,8 +84,7 @@ class Test_ChatRoom(unittest.TestCase):
         )
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE_SHORT, mess_props))
         LOGGER.debug(pp.pformat(f'sent message \'{TEST_MESSAGE_SHORT}\''))
-        
-        
+
     def test_send_long_message(self):
         """test sending one long message
         """
@@ -103,8 +100,7 @@ class Test_ChatRoom(unittest.TestCase):
         )
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE_LONG, mess_props))
         LOGGER.debug(pp.pformat(f'sent message \'{TEST_MESSAGE_LONG}\''))
-        
-    
+
     def test_send_number_message(self):
         """test sending one number message
         """
@@ -120,7 +116,6 @@ class Test_ChatRoom(unittest.TestCase):
         )
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE_NUMBERS, mess_props))
         LOGGER.debug(pp.pformat(f'sent message \'{TEST_MESSAGE_NUMBERS}\''))
-        
 
     def test_send_receive_message(self):
         """test sending and receiving a message
@@ -138,7 +133,7 @@ class Test_ChatRoom(unittest.TestCase):
         self.assertTrue(self.room_list.find(PUBLIC_ROOM_NAME).send_message(TEST_MESSAGE, mess_props))
         message_list = self.room_list.find(PUBLIC_ROOM_NAME).get_messages(20, False)
         self.assertIsNot(message_list, [])
-        
+
         LOGGER.debug(pp.pformat(message_list))
         self.assertIn(TEST_MESSAGE, message_list)
 
@@ -161,11 +156,10 @@ class Test_ChatRoom(unittest.TestCase):
             )
         message_list = self.room_list.find(PUBLIC_ROOM_NAME).get_messages(1000, False)
         self.assertIsNot(message_list, [])
-        
+
         LOGGER.debug(pp.pformat(message_list))
         self.assertTrue(set(repeat(TEST_MESSAGE, 10)).issubset(message_list))
 
-        
     def test_send_receive_empty_message(self):
         """test sending one empty message
         """
@@ -185,7 +179,7 @@ class Test_ChatRoom(unittest.TestCase):
         self.assertIsNot(message_list, [])
         LOGGER.debug(pp.pformat(message_list))
         self.assertIn(TEST_MESSAGE_EMPTY, message_list)
-        
+
     def test_send_receive_short_message(self):
         """test sending one short message
         """
@@ -205,7 +199,7 @@ class Test_ChatRoom(unittest.TestCase):
         self.assertIsNot(message_list, [])
         LOGGER.debug(pp.pformat(message_list))
         self.assertIn(TEST_MESSAGE_SHORT, message_list)
-        
+
     def test_send_receive_long_message(self):
         """test sending one long message
         """
@@ -225,7 +219,7 @@ class Test_ChatRoom(unittest.TestCase):
         self.assertIsNot(message_list, [])
         LOGGER.debug(pp.pformat(message_list))
         self.assertIn(TEST_MESSAGE_LONG, message_list)
-    
+
     def test_send_receive_number_message(self):
         """test sending one number message
         """
@@ -245,10 +239,11 @@ class Test_ChatRoom(unittest.TestCase):
         self.assertIsNot(message_list, [])
         LOGGER.debug(pp.pformat(message_list))
         self.assertIn(TEST_MESSAGE_NUMBERS, message_list)
-        
+
     def test_room_list_add(self):
         chat_room = ChatRoom(PUBLIC_ROOM_NAME, [], USER_ALIAS, USER_ALIAS, True)
         self.room_list.add(chat_room)
+
 
 if __name__ == "__main__":
     unittest.main()
