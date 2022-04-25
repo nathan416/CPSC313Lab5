@@ -149,7 +149,7 @@ def receive_messages(room_name: str, messages_to_get: int):
     Returns:
         list: list of ChatMessages
     """
-    chat_room = room_list.find(room_name)
+    chat_room = room_list.get(room_name)
     return chat_room.get_messages(num_messages=messages_to_get, return_objects=False)
 
 
@@ -166,9 +166,9 @@ def send_message(room_name: str, message: str, from_alias: str, to_alias: str):
     Returns:
         str: message input
     """
-    chat_room = room_list.find(room_name)
+    chat_room = room_list.get(room_name)
     mess_props = MessageProperties(
-        room_name, SENT_MESSAGE, to_alias, from_alias, datetime.now(), None, -1
+        room_name, SENT_MESSAGE, to_alias, from_alias, datetime.now(), None
     )
     chat_room.send_message(message, mess_props)
     return message

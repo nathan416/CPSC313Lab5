@@ -21,14 +21,13 @@ class MessageProperties:
     """class holding the properties of ChatMessages
     """
 
-    def __init__(self, room_name: str, mess_type: int, to_user: str, from_user: str, sent_time: datetime, rec_time: datetime, sequence_number: int) -> None:
+    def __init__(self, room_name: str, mess_type: int, to_user: str, from_user: str, sent_time: datetime, rec_time: datetime) -> None:
         self.__room_name = room_name
         self.__mess_type = mess_type
         self.__to_user = to_user
         self.__from_user = from_user
         self.__sent_time = sent_time
         self.__rec_time = rec_time
-        self.__sequence_number = sequence_number
 
     @property
     def mess_type(self):
@@ -54,10 +53,6 @@ class MessageProperties:
     def rec_time(self):
         return self.__rec_time
 
-    @property
-    def sequence_number(self):
-        return self.__sequence_number
-
     def to_dict(self):
         return {
             "room_name": self.__room_name,
@@ -66,7 +61,6 @@ class MessageProperties:
             "from_user": self.__from_user,
             "sent_time": self.__sent_time,
             "rec_time": self.__rec_time,
-            "sequence_num": self.__sequence_number,
         }
 
     def __str__(self):
@@ -77,10 +71,11 @@ class ChatMessage:
     """ class for storing messages in the ChatRoom
     """
 
-    def __init__(self, message: str, mess_id: int, mess_props: MessageProperties):
+    def __init__(self, message: str, mess_id: int, mess_props: MessageProperties, sequence_num: int):
         self.__message = message
         self.__mess_id = mess_id
         self.__mess_props = mess_props
+        self.__sequence_num = sequence_num
         self.__dirty = True
 
     @property
@@ -99,14 +94,23 @@ class ChatMessage:
     def dirty(self):
         return self.__dirty
 
+    @property
+    def sequence_num(self):
+        return self.__sequence_num
+
+    @sequence_num.setter
+    def sequence_num(self, new_value):
+        if isinstance(new_value, int):
+            self.__sequence_num = new_value
+
     @mess_id.setter
     def mess_id(self, new_value):
-        if type(new_value) is int:
+        if isinstance(new_value, int):
             self.__mess_id = new_value
 
     @dirty.setter
     def dirty(self, new_value):
-        if type(new_value) is bool:
+        if isinstance(new_value, bool):
             self.__dirty = new_value
 
     def to_dict(self):
@@ -177,11 +181,16 @@ class ChatRoom(deque):
         """
         sequence_num = self.__mongo_seq_collection.find_one_and_update(
             {'_id': 'userid'},
-            {'$inc': {self.__room_name: 1}},
-            projection={'seq': True, '_id': False},
+            {'$inc': {self.room_name: 1}},
+            projection={self.room_name: True, '_id': False},
             upsert=True,
             return_document=ReturnDocument.AFTER)
         return sequence_num
+
+    def __get_current_sequence_num(self):
+        if (sequence_num := self.__mongo_seq_collection.find_one({self.room_name: {'$exists': 'true'}})) is None:
+            return -1
+        return sequence_num[self.room_name]
 
     def add_group_member(self, member_name):
         """add new user to member list
@@ -201,6 +210,22 @@ class ChatRoom(deque):
 
     def __retrieve_messages(self):
         pass
+
+    def find_by_sequence_num(self, sequence_num) -> ChatMessage:
+        """ binary search implementation since the deque is sorted
+        """
+        num_messages = self.length()
+        cur_low_index = 0
+        cur_hi_index = num_messages - 1
+        while self[cur_low_index] < sequence_num < self[cur_hi_index]:
+            cur_mid = (cur_hi_index - cur_low_index) // 2
+            if sequence_num < self[cur_mid].sequence_num:
+                cur_hi_index = cur_mid
+            elif sequence_num > self[cur_mid].sequence_num:
+                cur_low_index = cur_mid
+            else:  # we found it!! we can return it
+                return self[cur_mid]
+        return None
 
     def __restore(self) -> bool:
         """We're restoring data from Mongo.
@@ -226,7 +251,7 @@ class ChatRoom(deque):
         self.__deleted = room_metadata['deleted']
         self.__dirty = False
 
-        for mess_dict in self.__mongo_collection.find({"room_name": {"$exists": False}}):
+        for mess_dict in self.__mongo_collection.find({"room_name": {"$exists": False}}).sort("sequence_num", 1):
             new_mess_props = MessageProperties(
                 mess_dict["mess_props"]["room_name"],
                 mess_dict["mess_props"]["mess_type"],
@@ -234,9 +259,8 @@ class ChatRoom(deque):
                 mess_dict["mess_props"]["from_user"],
                 mess_dict["mess_props"]["sent_time"],
                 mess_dict["mess_props"]["rec_time"],
-                mess_dict["mess_props"]["sequence_num"],
             )
-            new_message = ChatMessage(mess_dict["message"], self.length(), new_mess_props)
+            new_message = ChatMessage(mess_dict["message"], self.length(), new_mess_props, mess_dict["sequence_num"])
             new_message.dirty = False
             self.put(new_message)
         return True
@@ -265,16 +289,20 @@ class ChatRoom(deque):
                 "owner_alias": self.__owner_alias,
                 "room_type": self.__room_type,
                 "member_list": self.__member_list,
-                'deleted': self.deleted,
+                'deleted': self.__deleted,
                 "create_time": self.__create_time,
                 "modify_time": self.__modify_time,
             }, upsert=True)
         self.__dirty = False
         for message in list(self):
             if message.dirty:
-                message.sequence_number = self.__get_next_sequence_num()
-                serialized2 = message.to_dict()
-                self.__mongo_collection.insert_one(serialized2)
+                if message.mess_id is None or self.__mongo_collection.find_one({'_id': message.mess_id}) is None:
+                    message.sequence_num = self.__get_next_sequence_num()[self.room_name]
+                    serialized = message.to_dict()
+                    message.mess_id = self.__mongo_collection.insert_one(serialized).inserted_id
+                else:
+                    serialized = message.to_dict()
+                    self.__mongo_collection.replace_one({'id': message.mess_id}, serialized, upsert=True)
                 message.dirty = False
 
     @STATSCLIENT.timer('get_messages')
@@ -360,15 +388,21 @@ class RoomList():
     """
 
     def __init__(self, name: str = DEFAULT_ROOM_LIST_NAME):
+        self.__name = name
         self.__room_list = []
+        self.__rooms_metadata = list()
         self.__mongo_client = MongoClient(host=MONGO_HOST, port=MONGO_PORT, username=USERNAME, password=PASSWORD, authSource='cpsc313', authMechanism='SCRAM-SHA-256')
-        self.__mongo_db = self.__mongo_client['cpsc313']
-        self.__mongo_collection = self.__mongo_db['main']
+        self.__mongo_db = self.__mongo_client[MONGO_DB_NAME]
+        self.__mongo_collection = self.__mongo_db[DEFAULT_ROOM_LIST_NAME]
+
+        if self.__mongo_collection is None:
+            self.__mongo_collection = self.__mongo_db.create_collection(self.name)
 
         if not self.__restore():
-            self.__name = name
             self.__create_time = datetime.now()
             self.__modify_time = datetime.now()
+            self.__dirty = True
+            self.__persist()
 
     @property
     def name(self):
@@ -378,18 +412,28 @@ class RoomList():
     def room_list(self):
         return self.__room_list
 
+    def create(self, room_name: str, owner_alias: str, member_list: list = None, room_type: int = ROOM_TYPE_PRIVATE) -> ChatRoom:
+        """ Create a new chatroom. First check to see if a room exists with that name, and if so, bail. """
+        if self.get(room_name=room_name) is not None:
+            LOGGER.debug(f'Trying to create, room_name: {room_name} already exists')
+            return None
+        new_room = ChatRoom(room_name=room_name, owner_alias=owner_alias, member_list=member_list, room_type=room_type, create_new=True)
+        self.add(new_room=new_room)
+        return new_room
+
     def add(self, new_room: ChatRoom):
-        """adds ChatRoom object to the room list after checking if it already exists. 
+        """adds ChatRoom object to the room list after checking if it already exists.
 
         Args:
             new_room (ChatRoom): room to be added to the room list
         """
-        for room in self.__room_list:
-            if room.room_name == new_room.room_name:
-                LOGGER.warning(f'Room {new_room} already registered')
-                return
+        if self.get(room_name=new_room.room_name) is not None:
+            LOGGER.debug(f'Trying to add, room_name: {new_room.room_name} already exists')
+            return
 
         self.__room_list.append(new_room)
+        if self.find_room_in_metadata(new_room.room_name) is None:
+            self.__rooms_metadata.append({'room_name': new_room.name, 'room_type': new_room.room_type, 'owner_alias': new_room.owner_alias, 'member_list': new_room.member_list})
         self.__modify_time = datetime.now()
         self.__persist()
 
@@ -407,7 +451,7 @@ class RoomList():
                 return
         LOGGER.warning(f'Room {room} not found in {self.__room_list}')
 
-    def find(self, room_name: str) -> ChatRoom:
+    def get(self, room_name: str) -> ChatRoom:
         """Find a room by the room name
 
         Args:
