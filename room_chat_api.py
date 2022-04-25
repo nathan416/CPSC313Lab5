@@ -6,9 +6,12 @@
     fast api implementation for message chat
 """
 import fastapi as fa
-from fastapi import Depends, FastAPI
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from passlib.context import CryptContext
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
 
 from constants import *
 from room import *
@@ -84,6 +87,45 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 
 async def get_current_active_user(current_user: ChatUser = Depends(get_current_user)):
     return current_user
+
+def fake_hashed_password(password: str):
+    return "fakehashed" + password
+
+""" Auth methods 
+"""
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.alias}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/token2")
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = users.get(form_data.username)
+    if not user:
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    hash_pass = fake_hashed_password(form_data.password)
+    if not hash_pass == user.hash_pass:
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    return {"access_token": user.alias, "token_type": "bearer"}
+    
+@app.get("/users/me")
+async def read_users_me(current_user: ChatUser = Depends(get_current_active_user)):
+    return {"username": current_user.alias, "email": current_user.email, "hash_pass": current_user.hash_pass}   
+
+@app.get("/")
+async def index(token: str = Depends(oauth2_scheme)):
+    return {"token": token}
+#    return {"message": {"from": "dan", "to": "you"}}
 
 
 @app.get("/items/")

@@ -9,16 +9,27 @@ class ChatUser():
     """ class for users of the chat system. Users must be registered 
     """
 
-    def __init__(self, alias: str, user_id=None, create_time: datetime = datetime.now(), modify_time: datetime = datetime.now()) -> None:
+    def __init__(self, alias: str, password: str = "", user_id = None, email: str = "", blacklist: list = [], create_time: datetime = datetime.now(), modify_time: datetime = datetime.now()) -> None:
         self.__alias = alias
-        self.__user_id = user_id
+        self.__user_id = user_id 
+        self.__email = email
         self.__create_time = create_time
         self.__modify_time = modify_time
+        self.__hash_pass = ""
+        self.__blacklist = blacklist
         if self.__user_id is not None:
             self.__dirty = False
         else:
             self.__dirty = True
 
+    @property
+    def blacklist(self):
+        return self.__blacklist
+
+    @property
+    def hash_pass(self):
+        return self.__hash_pass
+    
     @property
     def alias(self):
         return self.__alias
@@ -26,17 +37,70 @@ class ChatUser():
     @property
     def dirty(self):
         return self.__dirty
+    
+    @hash_pass.setter
+    def hash_pass(self, new_pass):
+        self.__hash_pass = new_pass
+        
+    @property
+    def email(self):
+        return self.__email
+    
+    @email.setter
+    def email(self, new_email):
+        self.__email = new_email
 
     @dirty.setter
     def dirty(self, new_value):
         if type(new_value) is bool:
             self.__dirty = new_value
 
+    @alias.setter
+    def alias(self, new_alias):
+        if len(new_alias > 2):
+            self.__alias = new_alias
+            self.__dirty = True
+    
+    @property
+    def private_queue_name(self):
+        return self.__private_queue_name
+
+    @private_queue_name.setter
+    def private_queue_name(self, new_name: str = ""):
+        if len(new_name) > 2:
+            self.__private_queue_name = new_name
+            self.__dirty = True
+
+    @property
+    def public_queue_name(self):
+        return self.__public_queue_name
+
+    @public_queue_name.setter
+    def public_queue_name(self, new_name: str = ""):
+        if len(new_name) > 2:
+            self.__public_queue_name = new_name    
+            self.__dirty = True 
+
+    def add_alias_to_blacklist(self, alias) -> bool:
+        if alias not in self.blacklist:
+            self.blacklist.append(alias)
+            self.dirty = True
+            return True
+        return False
+
+    def remove_alias_from_blacklist(self, alias) -> bool:
+        if alias in self.blacklist:
+            self.blacklist.remove(alias)
+            self.dirty = True
+            return True
+        return False
+
     def to_dict(self):
         return {
-            'alias': self.__alias,
-            'create_time': self.__create_time,
-            'modify_time': self.__modify_time
+                'alias': self.__alias,
+                'blacklist': self.blacklist,
+                'create_time': self.__create_time,
+                'modify_time': self.__modify_time
         }
 
     def __str__(self):
@@ -60,6 +124,18 @@ class UserList():
             self.__create_time = datetime.now()
             self.__modify_time = datetime.now()
             self.__dirty = True
+            
+    @property
+    def id(self):
+        return self.__id
+
+    @property
+    def user_list(self):
+        return self.__user_list
+    
+    @property
+    def dirty(self):
+        return self.__dirty
 
     def register(self, new_alias: str) -> ChatUser:
         """
@@ -69,10 +145,22 @@ class UserList():
         if user is not None:
             LOGGER.warning(f'User {new_alias} already registered')
             return user
-        new_user = ChatUser(new_alias)
-        self.append(new_user)
-        self.__persist()
+        if len(new_alias) > 2:
+            new_user = ChatUser(new_alias)
+            self.append(new_user)
         return new_user
+    
+    def deregister(self, alias_to_remove: str) -> ChatUser:
+        """ set the removed flag to true for the user
+            TODO: must remove the user from all member lists
+        """
+        if (user := self.get(alias_to_remove)) is None:
+            return user
+        user.removed = True
+        return user
+
+    def __len__(self):
+        return len(self.user_list)
 
     def get(self, target_alias: str) -> ChatUser:
         LOGGER.info(f"Getting User {target_alias} from {self.__name}")
@@ -82,11 +170,14 @@ class UserList():
         LOGGER.warning(f"User {target_alias} not found")
         return None
 
-    def get_all_users(self) -> list:
-        return self.__user_list
+    def get_all_user_aliases(self) -> list:
+        return [user.alias for user in self.user_list]
 
     def append(self, new_user: ChatUser) -> None:
-        self.__user_list.append(new_user)
+        if new_user is not None:
+            self.__user_list.append(new_user)
+            self.__dirty = True
+            self.persist()
 
     def __restore(self) -> bool:
         """ First get the document for the list itself, then get all documents that are not the list metadata
@@ -97,22 +188,23 @@ class UserList():
             LOGGER.warning("User list not found")
             return False
         self.__name = list_data["list_name"]
+        self.__id = list_data["_id"]
         self.__create_time = list_data["create_time"]
         self.__modify_time = list_data["modify_time"]
         for user_dict in self.__mongo_collection.find({"list_name": {"$exists": False}}):
             new_user = ChatUser(alias=user_dict["alias"], user_id=user_dict["_id"], create_time=user_dict["create_time"], modify_time=user_dict["modify_time"])
             new_user.dirty = False
-            self.append(new_user)
+            self.user_list.append(new_user)
         LOGGER.info("Done restoring user list from Mongo")
         return True
 
-    def __persist(self):
+    def persist(self):
         """ First save a document that describes the user list (name of list, create and modify times)
             Second, for each user in the list create and save a document for that user
         """
         LOGGER.info("Persisting data to Mongo")
         if (self.__mongo_collection.find_one({"list_name": self.__name}) is None):
-            self.__mongo_collection.insert_one(
+            self.__id = self.__mongo_collection.insert_one(
                 {
                     "list_name": self.__name,
                     "create_time": self.__create_time,
@@ -120,17 +212,21 @@ class UserList():
                 }
             )
         else:
-            self.__mongo_collection.replace_one({"list_name": self.__name},
-            {
-                "list_name": self.__name,
-                "create_time": self.__create_time,
-                "modify_time": self.__modify_time,
-            }, upsert=True)
-        self.dirty = False
+            if(self.__dirty):
+                self.__mongo_collection.replace_one({"list_name": self.__name},
+                {
+                    "list_name": self.__name,
+                    "create_time": self.__create_time,
+                    "modify_time": self.__modify_time,
+                }, upsert=True)
+                self.dirty = False
         for user in self.__user_list:
             if user.dirty:
-                serialized2 = user.to_dict()
-                self.__mongo_collection.insert_one(serialized2)
+                if self.__mongo_collection.find_one({'alias': user.alias}) is None:
+                        user.user_id = self.__mongo_collection.insert_one(user.to_dict())
+                else:
+                    self.__mongo_collection.replace_one({'_id': user.user_id}, user.to_dict(), upsert=True)
+                LOGGER.debug(user.to_dict())
                 user.dirty = False
         LOGGER.info("Done persisting data to Mongo")
 
