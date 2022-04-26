@@ -134,6 +134,7 @@ class ChatRoom(deque):
         self.__owner_alias = owner_alias
         self.__room_type = room_type
         self.__create_new = create_new
+        self.__removed = False
 
         self.__mongo_client = MongoClient(host=MONGO_HOST, port=MONGO_PORT, username=USERNAME, password=PASSWORD, authSource='cpsc313', authMechanism='SCRAM-SHA-256')
         self.__mongo_db = self.__mongo_client.cpsc313
@@ -178,6 +179,7 @@ class ChatRoom(deque):
 
     def __get_next_sequence_num(self):
         """ This is the method that you need for managing the sequence. Note that there is a separate collection for just this one document
+            gets the sequence collection
         """
         sequence_num = self.__mongo_seq_collection.find_one_and_update(
             {'_id': 'userid'},
@@ -260,7 +262,7 @@ class ChatRoom(deque):
                 mess_dict["mess_props"]["sent_time"],
                 mess_dict["mess_props"]["rec_time"],
             )
-            new_message = ChatMessage(mess_dict["message"], self.length(), new_mess_props, mess_dict["sequence_num"])
+            new_message = ChatMessage(mess_dict["message"], mess_dict["_id"], new_mess_props, mess_dict["sequence_num"])
             new_message.dirty = False
             self.put(new_message)
         return True
@@ -270,6 +272,7 @@ class ChatRoom(deque):
         Second, for each message in the list create and save a document for that message
             NOTE: We're using our custom to_dict so we give Mongo what it wants
         """
+        LOGGER.info("Starting persist")
         if (self.__mongo_collection.find_one({"room_name": self.__room_name}) is None):
             self.__mongo_collection.insert_one(
                 {
@@ -297,7 +300,6 @@ class ChatRoom(deque):
         for message in list(self):
             if message.dirty:
                 if message.mess_id is None or self.__mongo_collection.find_one({'_id': message.mess_id}) is None:
-                    message.sequence_num = self.__get_next_sequence_num()[self.room_name]
                     serialized = message.to_dict()
                     message.mess_id = self.__mongo_collection.insert_one(serialized).inserted_id
                 else:
@@ -307,8 +309,9 @@ class ChatRoom(deque):
 
     @STATSCLIENT.timer('get_messages')
     def get_messages(self, num_messages: int, return_objects: bool) -> list:  # list of ChatMessage
-        """get a list of messages or message objects
-
+        """ get a list of messages or message objects
+            gets the messages from the right of the deque and doesnt display them if the sender 
+            of the message is in the owner's blacklist
         Args:
             num_messages (int): number of messages
             return_objects (bool): whether to get ChatMessage or str
@@ -317,12 +320,13 @@ class ChatRoom(deque):
             list: _description_
         """
         message_list = []
-        if return_objects:
-            for loop_control in range(min(num_messages, len(self))):
-                message_list.append(super()[loop_control])
-        else:
-            for loop_control in range(min(num_messages, len(self))):
-                message_list.append(super()[loop_control].message)
+        
+        for message in super()[-num_messages:]:
+            if message.from_user not in self.__user_list.get(self.__owner_alias).blacklist:
+                if return_objects:
+                    message_list.append(message)
+                else:
+                    message_list.append(message.message)
         STATSCLIENT.gauge('num_messages', len(message_list))
         return message_list
 
@@ -336,22 +340,23 @@ class ChatRoom(deque):
         Returns:
             bool: returns true if successful
         """
-        message_object = ChatMessage(message, self.length(), mess_props)
+        message_object = ChatMessage(message, None, mess_props, self.__get_next_sequence_num()[self.room_name])
         put_success = self.put(message_object)
         self.__persist()
         return put_success
 
     def find_message(self, message_text: str) -> ChatMessage:
-        """search for a message by text and return the ChatMessage object
-
+        """ search for a message by text and return the ChatMessage object
+            doesnt display them if the sender 
+            of the message is in the owner's blacklist
         Args:
             message_text (str): search content
 
         Returns:
             ChatMessage: return object
         """
-        for message in self:
-            if message_text == message.message:
+        for message in super():
+            if message_text == message.message and message.from_user not in self.__user_list.get(self.__owner_alias).blacklist:
                 return message
         LOGGER.warning(f"{message_text} not found")
 
@@ -445,7 +450,7 @@ class RoomList():
         """
         for room in self.__room_list:
             if room.room_name == room_name:
-                self.__room_list.remove(room)
+                room.removed = True
                 self.__modify_time = datetime.now()
                 self.__persist()
                 return
@@ -461,7 +466,7 @@ class RoomList():
             ChatRoom: found object
         """
         for room in self.__room_list:
-            if room.room_name == room_name:
+            if room.room_name == room_name and not room.removed:
                 return room
         LOGGER.warning(f'Room {room_name} not found in {self.__room_list}')
 
@@ -477,7 +482,7 @@ class RoomList():
         found_room_list = []
         for room in self.__room_list:
             found_member = room.member_list.find(member)
-            if found_member is not None:
+            if found_member is not None and not room.removed:
                 found_room_list.append(room)
         return found_room_list
 
@@ -492,7 +497,7 @@ class RoomList():
         """
         found_room_list = []
         for room in self.__room_list:
-            if room.owner_alias == owner:
+            if room.owner_alias == owner and not room.removed:
                 found_room_list.append(room)
         return found_room_list
 

@@ -17,6 +17,7 @@ class ChatUser():
         self.__modify_time = modify_time
         self.__hash_pass = ""
         self.__blacklist = blacklist
+        self.__removed = False
         if self.__user_id is not None:
             self.__dirty = False
         else:
@@ -56,8 +57,8 @@ class ChatUser():
             self.__dirty = new_value
 
     @alias.setter
-    def alias(self, new_alias):
-        if len(new_alias > 2):
+    def alias(self, new_alias: str):
+        if len(new_alias) > 2:
             self.__alias = new_alias
             self.__dirty = True
     
@@ -80,6 +81,15 @@ class ChatUser():
         if len(new_name) > 2:
             self.__public_queue_name = new_name    
             self.__dirty = True 
+            
+    @property
+    def removed(self):
+        return self.__removed
+
+    @removed.setter
+    def removed(self, new_value: bool):
+        if type(new_value) is bool:
+            self.__removed = new_value
 
     def add_alias_to_blacklist(self, alias) -> bool:
         if alias not in self.blacklist:
@@ -98,7 +108,8 @@ class ChatUser():
     def to_dict(self):
         return {
                 'alias': self.__alias,
-                'blacklist': self.blacklist,
+                'blacklist': self.__blacklist,
+                'removed': self.__removed,
                 'create_time': self.__create_time,
                 'modify_time': self.__modify_time
         }
@@ -165,15 +176,24 @@ class UserList():
     def get(self, target_alias: str) -> ChatUser:
         LOGGER.info(f"Getting User {target_alias} from {self.__name}")
         for user in self.__user_list:
-            if user.alias == target_alias:
+            if user.alias == target_alias and not user.removed:
                 return user
         LOGGER.warning(f"User {target_alias} not found")
         return None
 
     def get_all_user_aliases(self) -> list:
-        return [user.alias for user in self.user_list]
+        alias_list = []
+        for user in self.user_list:
+            if not user.removed:
+                alias_list.append(user.alias)
+        return alias_list
 
     def append(self, new_user: ChatUser) -> None:
+        """appends user to internal list object and saves to mongo
+
+        Args:
+            new_user (ChatUser): _description_
+        """
         if new_user is not None:
             self.__user_list.append(new_user)
             self.__dirty = True
@@ -181,6 +201,7 @@ class UserList():
 
     def __restore(self) -> bool:
         """ First get the document for the list itself, then get all documents that are not the list metadata
+            pulls data from mongo
         """
         LOGGER.info("Restoring user list from Mongo")
         list_data = self.__mongo_collection.find_one({"list_name": {"$exists": True}})
