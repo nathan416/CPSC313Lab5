@@ -77,6 +77,7 @@ class ChatMessage:
         self.__mess_props = mess_props
         self.__sequence_num = sequence_num
         self.__dirty = True
+        self.__removed = False
 
     @property
     def message(self):
@@ -102,6 +103,15 @@ class ChatMessage:
     def sequence_num(self, new_value):
         if isinstance(new_value, int):
             self.__sequence_num = new_value
+            
+    @property
+    def removed(self):
+        return self.__removed
+
+    @removed.setter
+    def removed(self, new_value):
+        if isinstance(new_value, bool):
+            self.__removed = new_value
 
     @mess_id.setter
     def mess_id(self, new_value):
@@ -310,7 +320,7 @@ class ChatRoom(deque):
     @STATSCLIENT.timer('get_messages')
     def get_messages(self, num_messages: int, return_objects: bool) -> list:  # list of ChatMessage
         """ get a list of messages or message objects
-            gets the messages from the right of the deque and doesnt display them if the sender 
+            gets the messages from the right of the deque and doesnt display them if the sender
             of the message is in the owner's blacklist
         Args:
             num_messages (int): number of messages
@@ -320,7 +330,7 @@ class ChatRoom(deque):
             list: _description_
         """
         message_list = []
-        
+
         for message in super()[-num_messages:]:
             if message.from_user not in self.__user_list.get(self.__owner_alias).blacklist:
                 if return_objects:
@@ -347,7 +357,7 @@ class ChatRoom(deque):
 
     def find_message(self, message_text: str) -> ChatMessage:
         """ search for a message by text and return the ChatMessage object
-            doesnt display them if the sender 
+            doesnt display them if the sender
             of the message is in the owner's blacklist
         Args:
             message_text (str): search content
@@ -360,7 +370,39 @@ class ChatRoom(deque):
                 return message
         LOGGER.warning(f"{message_text} not found")
 
-    def get(self) -> ChatMessage:  # – gets the next message in the deque from the right
+    def find_messages_by_user(self, user: str) -> list:
+        """ search for a message by sender and return the list of ChatMessage objects
+            doesnt display them if the sender
+            of the message is in the owner's blacklist
+        Args:
+            user (str): search content
+
+        Returns:
+            list: list of ChatMessage objects
+        """
+        message_list = []
+        for message in super():
+            if user == message.from_user and message.from_user not in self.__user_list.get(self.__owner_alias).blacklist and not message.removed:
+                message_list.append(message)
+        return message_list
+    
+    def remove_messages_by_user(self, user: str) -> list:
+        """ search for a message by sender and return the list of ChatMessage objects
+            doesnt display them if the sender
+            of the message is in the owner's blacklist
+        Args:
+            user (str): search content
+
+        Returns:
+            list: list of ChatMessage objects
+        """
+        message_list = []
+        for message in super():
+            if user == message.from_user and message.from_user not in self.__user_list.get(self.__owner_alias).blacklist:
+                message.removed = True
+        return message_list
+
+    def get(self) -> ChatMessage:
         """return last object
 
         Returns:
