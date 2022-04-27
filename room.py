@@ -9,7 +9,6 @@ from collections import deque
 from datetime import datetime
 
 from pymongo import MongoClient, ReturnDocument
-import itertools
 
 from constants import *
 from users import *
