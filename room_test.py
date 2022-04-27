@@ -1,7 +1,7 @@
 """ By: Nathan Flack
-    Assignment: Lab 4: Message based chat MVP2
+    Assignment: Lab 5: Message based chat MVP3
     Class: CPSC 313- Distributed and Cloud Computing
-    Due: March 20, 2022 11:59 AM
+    Due: April 24, 2022 11:59 AM
 
     tests for Room Chat implementation
 """

@@ -1,3 +1,11 @@
+""" By: Nathan Flack
+    Assignment: Lab 5: Message based chat MVP3
+    Class: CPSC 313- Distributed and Cloud Computing
+    Due: April 24, 2022 11:59 AM
+
+    chat user tests
+"""
+
 import unittest
 from unittest import TestCase
 from constants import *
