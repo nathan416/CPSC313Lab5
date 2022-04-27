@@ -5,17 +5,21 @@
 
     fast api implementation for message chat
 """
-import fastapi as fa
-from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel
-from passlib.context import CryptContext
 from datetime import datetime, timedelta
+
+import fastapi as fa
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
+from fastapi.responses import JSONResponse, Response
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
 
 from constants import *
 from room import *
 from users import *
+
+LOGGER = logging.getLogger(__name__)
 
 app = fa.FastAPI()
 room_list = RoomList()
@@ -150,11 +154,11 @@ def receive_messages(room_name: str, messages_to_get: int):
         list: list of ChatMessages
     """
     chat_room = room_list.get(room_name)
-    return chat_room.get_messages(num_messages=messages_to_get, return_objects=False)
+    return chat_room.get_messages(USER_ALIAS, num_messages=messages_to_get, return_objects=False)
 
 
 @app.post("/send", status_code=200)
-def send_message(room_name: str, message: str, from_alias: str, to_alias: str):
+def send_message(room_name: str, message: str, from_alias: str):
     """api endpoint to send messages to the ChatRoom
 
     Args:
@@ -167,11 +171,34 @@ def send_message(room_name: str, message: str, from_alias: str, to_alias: str):
         str: message input
     """
     chat_room = room_list.get(room_name)
-    mess_props = MessageProperties(
-        room_name, SENT_MESSAGE, to_alias, from_alias, datetime.now(), None
-    )
-    chat_room.send_message(message, mess_props)
+    chat_room.send_message(message, from_alias)
     return message
+
+@app.post("/message", status_code=201)
+async def send_message(request: Request, room_name: str, message: str, from_alias: str):
+    """send message api call
+
+    Args:
+        request (Request): _description_
+        room_name (str): name of room
+        message (str): message text
+        from_alias (str): sender
+    """    
+    if (room_instance := room_list.get(room_name=room_name)) is None:
+        LOGGER.debug(f'In POST MESSAGE - ROOM does not exist: {message} == room is {room_name}')
+        return JSONResponse(status_code=450, content="Room does not exist")
+    if users.get(from_alias) is None:
+        LOGGER.debug(f'In POST MESSAGE - ALIAS does not exist: {message} == alias is {from_alias}')
+        return JSONResponse(status_code=455, content=f'alias {from_alias} does not exist')
+    if from_alias not in room_instance.member_list:
+        LOGGER.debug(f'In POST MESSAGE - ALIAS is not in ROOM: {message} == alias is {from_alias} == room is {room_name}')
+        return JSONResponse(status_code=445, content=f'alias {from_alias} is not a member of room {room_name}')
+    if room_instance.send_message(message=message, from_alias=from_alias) is True:
+        LOGGER.debug(f'In POST MESSAGE - SUCCESS: {message} == room is {room_name}')
+        return "Success"    
+    else:
+        LOGGER.debug(f'In POST MESSAGE - PROBLEMS: {message} == room is {room_name}')
+        return JSONResponse(status_code=410, content="Problems")
 
 
 @app.get("/users/", status_code=200)

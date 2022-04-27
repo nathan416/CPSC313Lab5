@@ -1,7 +1,7 @@
 """ By: Nathan Flack
-    Assignment: Lab 4: Message based chat MVP2
+    Assignment: Lab 5: Message based chat MVP3
     Class: CPSC 313- Distributed and Cloud Computing
-    Due: March 20, 2022 11:59 AM
+    Due: April 24, 2022 11:59 AM
 
     Room Chat implementation
 """
@@ -9,12 +9,15 @@ from collections import deque
 from datetime import datetime
 
 from pymongo import MongoClient, ReturnDocument
+import itertools
 
 from constants import *
 from users import *
 from statsd import StatsClient
 
 STATSCLIENT = StatsClient(STATS_CLIENT_IP)
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MessageProperties:
@@ -71,7 +74,7 @@ class ChatMessage:
     """ class for storing messages in the ChatRoom
     """
 
-    def __init__(self, message: str, mess_id: int, mess_props: MessageProperties, sequence_num: int):
+    def __init__(self, message: str, mess_id: int, mess_props: MessageProperties, sequence_num: int = -1):
         self.__message = message
         self.__mess_id = mess_id
         self.__mess_props = mess_props
@@ -103,7 +106,7 @@ class ChatMessage:
     def sequence_num(self, new_value):
         if isinstance(new_value, int):
             self.__sequence_num = new_value
-            
+
     @property
     def removed(self):
         return self.__removed
@@ -126,7 +129,7 @@ class ChatMessage:
     def to_dict(self):
         """Controlling getting data from the class in a dictionary. Yes, I know there is a built in __dict__ but I wanted to retain control"""
         mess_props_dict = self.mess_props.to_dict()
-        return {"message": self.message, "mess_props": mess_props_dict}
+        return {"message": self.message, "sequence_num": self.sequence_num, "removed": self.removed, "mess_props": mess_props_dict}
 
     def __str__(self):
         return f"Chat Message: {self.message} - message props: {self.mess_props}"
@@ -143,7 +146,6 @@ class ChatRoom(deque):
         self.__member_list = []
         self.__owner_alias = owner_alias
         self.__room_type = room_type
-        self.__create_new = create_new
         self.__removed = False
 
         self.__mongo_client = MongoClient(host=MONGO_HOST, port=MONGO_PORT, username=USERNAME, password=PASSWORD, authSource='cpsc313', authMechanism='SCRAM-SHA-256')
@@ -152,16 +154,22 @@ class ChatRoom(deque):
         self.__mongo_seq_collection = self.__mongo_db.get_collection('sequence')
         if self.__mongo_collection is None:
             self.__mongo_collection = self.__mongo_db.create_collection(room_name)
-
-        if create_new or self.__restore() is False:
+        if owner_alias not in member_list:
+            member_list.append(owner_alias)
+        if create_new is True or self.__restore() is False:
             self.__room_type = room_type
             self.__create_time = datetime.now()
             self.__modify_time = datetime.now()
             self.__owner_alias = owner_alias
             self.__dirty = True
+            self.__room_id = None
             self.__member_list = member_list
-        if owner_alias not in member_list:
-            member_list.append(owner_alias)
+            self.__deleted = False
+            for member in member_list:
+                if self.__user_list.get(member) is not None:
+                    self.add_member(member)
+                else:
+                    LOGGER.debug(f'Invalid alias: {member} trying to add alias to member list in chatroom constructor')
 
     @property
     def room_name(self):
@@ -180,12 +188,17 @@ class ChatRoom(deque):
         return self.__room_type
 
     @property
-    def create_new(self):
-        return self.__create_new
-
-    @property
     def dirty(self):
         return self.__dirty
+
+    @property
+    def removed(self):
+        return self.__removed
+
+    @removed.setter
+    def removed(self, new_value):
+        if isinstance(new_value, bool):
+            self.__removed = new_value
 
     def __get_next_sequence_num(self):
         """ This is the method that you need for managing the sequence. Note that there is a separate collection for just this one document
@@ -204,12 +217,24 @@ class ChatRoom(deque):
             return -1
         return sequence_num[self.room_name]
 
-    def add_group_member(self, member_name):
+    def find_member(self, member_name) -> str:
+        for member in self.__member_list:
+            if member == member_name:
+                return member
+        return None
+
+    def add_member(self, member_name: str):
         """add new user to member list
 
         Args:
-            member_name (ChatUser): user
+            member_name (str): user
         """
+        if self.__user_list.get(member_name) is None:
+            LOGGER.warning('member not found in user list')
+            return 10
+        if self.find_member(member_name) is not None:
+            LOGGER.debug('member already exists')
+            return 1
         self.__member_list.append(member_name)
 
     def remove_group_member(self, member_name: str):
@@ -277,7 +302,7 @@ class ChatRoom(deque):
             self.put(new_message)
         return True
 
-    def __persist(self):
+    def persist(self):
         """First save a document that describes the room list (metadata: name of list, create and modify times) if it isn't already there
         Second, for each message in the list create and save a document for that message
             NOTE: We're using our custom to_dict so we give Mongo what it wants
@@ -310,6 +335,7 @@ class ChatRoom(deque):
         for message in list(self):
             if message.dirty:
                 if message.mess_id is None or self.__mongo_collection.find_one({'_id': message.mess_id}) is None:
+                    message.sequence_num = self.__get_next_sequence_num()[self.room_name]
                     serialized = message.to_dict()
                     message.mess_id = self.__mongo_collection.insert_one(serialized).inserted_id
                 else:
@@ -318,7 +344,7 @@ class ChatRoom(deque):
                 message.dirty = False
 
     @STATSCLIENT.timer('get_messages')
-    def get_messages(self, num_messages: int, return_objects: bool) -> list:  # list of ChatMessage
+    def get_messages(self, user_alias: str, num_messages: int = 0, return_objects: bool=False) -> tuple:  # list of ChatMessage
         """ get a list of messages or message objects
             gets the messages from the right of the deque and doesnt display them if the sender
             of the message is in the owner's blacklist
@@ -329,18 +355,27 @@ class ChatRoom(deque):
         Returns:
             list: _description_
         """
+        LOGGER.info('starting get_messages')
+        if user_alias not in self.member_list:  # TODO: propably should throw an exception here
+            LOGGER.debug(f'Inside get_messages, user alias {user_alias} is not in the members list')
+            return [], [], 0
         message_list = []
+        message_objects = []
 
-        for message in super()[-num_messages:]:
-            if message.from_user not in self.__user_list.get(self.__owner_alias).blacklist:
-                if return_objects:
-                    message_list.append(message)
-                else:
-                    message_list.append(message.message)
+        for message in list(self)[-num_messages:]:
+            if (user := self.__user_list.get(user_alias)) is not None:
+                if message.mess_props.from_user in user.blacklist:
+                    continue
+            message_objects.append(message)
+            message_list.append(message.message)
         STATSCLIENT.gauge('num_messages', len(message_list))
-        return message_list
+        total_messages = len(message_list)
+        if return_objects is True:
+            return message_list, message_objects, total_messages
+        else:
+            return message_list, [], total_messages
 
-    def send_message(self, message: str, mess_props: MessageProperties) -> bool:
+    def send_message(self, message: str, from_alias: str):
         """add a message to the room and update mongo
 
         Args:
@@ -350,9 +385,17 @@ class ChatRoom(deque):
         Returns:
             bool: returns true if successful
         """
-        message_object = ChatMessage(message, None, mess_props, self.__get_next_sequence_num()[self.room_name])
+        new_mess_props = MessageProperties(
+                room_name = self.room_name,
+                mess_type = MESSAGE_TYPE_SENT,
+                to_user = self.room_name,
+                from_user = from_alias,
+                sent_time = datetime.now(),
+                rec_time = None,
+            )
+        message_object = ChatMessage(message, None, new_mess_props)
         put_success = self.put(message_object)
-        self.__persist()
+        self.persist()
         return put_success
 
     def find_message(self, message_text: str) -> ChatMessage:
@@ -385,7 +428,7 @@ class ChatRoom(deque):
             if user == message.from_user and message.from_user not in self.__user_list.get(self.__owner_alias).blacklist and not message.removed:
                 message_list.append(message)
         return message_list
-    
+
     def remove_messages_by_user(self, user: str) -> list:
         """ search for a message by sender and return the list of ChatMessage objects
             doesnt display them if the sender
@@ -436,7 +479,7 @@ class RoomList():
 
     def __init__(self, name: str = DEFAULT_ROOM_LIST_NAME):
         self.__name = name
-        self.__room_list = []
+        self.__room_list = list()
         self.__rooms_metadata = list()
         self.__mongo_client = MongoClient(host=MONGO_HOST, port=MONGO_PORT, username=USERNAME, password=PASSWORD, authSource='cpsc313', authMechanism='SCRAM-SHA-256')
         self.__mongo_db = self.__mongo_client[MONGO_DB_NAME]
@@ -450,6 +493,8 @@ class RoomList():
             self.__modify_time = datetime.now()
             self.__dirty = True
             self.__persist()
+        else:
+            self.__dirty = False
 
     @property
     def name(self):
@@ -480,9 +525,16 @@ class RoomList():
 
         self.__room_list.append(new_room)
         if self.find_room_in_metadata(new_room.room_name) is None:
-            self.__rooms_metadata.append({'room_name': new_room.name, 'room_type': new_room.room_type, 'owner_alias': new_room.owner_alias, 'member_list': new_room.member_list})
+            self.__rooms_metadata.append({'room_name': new_room.room_name, 'room_type': new_room.room_type, 'owner_alias': new_room.owner_alias, 'member_list': new_room.member_list})
         self.__modify_time = datetime.now()
+        self.__dirty = True
         self.__persist()
+
+    def find_room_in_metadata(self, room_name: str) -> dict:
+        for room_dict in self.__rooms_metadata:
+            if room_dict['room_name'] == room_name:
+                return room_dict
+        return None
 
     def remove(self, room_name: str):
         """remove first occurrence of a room matching the given room_name
@@ -547,47 +599,45 @@ class RoomList():
         """ Save a document that describes the room list (name of list, create, modify times, and metadata).
         """
         LOGGER.info("Persisting room data to Mongo")
-        rooms_metadata = []
-        for room in self.__room_list:
-            user_str_list = []
-            user_list = room.member_list.get_all_users()
-            for user in user_list:
-                user_str_list.append(user.alias)
-            rooms_metadata.append({'room_name': room.room_name, 'room_type': room.room_type, 'owner_alias': room.owner_alias, 'member_list': user_str_list, })
-
         if (self.__mongo_collection.find_one({"list_name": self.__name}) is None):
             self.__mongo_collection.insert_one(
                 {
                     "list_name": self.__name,
                     "create_time": self.__create_time,
                     "modify_time": self.__modify_time,
-                    "rooms_metadata": rooms_metadata,
+                    "rooms_metadata": self.__rooms_metadata,
                 }
             )
-        else:
+        elif self.__dirty:
             self.__mongo_collection.replace_one({"list_name": self.__name},
                                                 {
                 "list_name": self.__name,
                 "create_time": self.__create_time,
                 "modify_time": self.__modify_time,
-                "rooms_metadata": rooms_metadata,
+                "rooms_metadata": self.__rooms_metadata,
             }, upsert=True)
+        for room in self.__room_list:
+            if room.dirty is True:
+                room.persist()
         LOGGER.info("Done persisting room data to Mongo")
 
     def __restore(self):
         """ Get the document for the list itself, which will have the room list metadata
         """
         LOGGER.info("Restoring room list from Mongo")
-        list_data = self.__mongo_collection.find_one({"list_name": {"$exists": True}})
+        list_data = self.__mongo_collection.find_one({"list_name": {"$exists": 'true'}})
         if list_data is None:
             LOGGER.warning("room list not found")
             return False
-        self.__name = list_data["list_name"]
-        self.__create_time = list_data["create_time"]
-        self.__modify_time = list_data["modify_time"]
-        for room_dict in list_data["rooms_metadata"]:
-            new_room = ChatRoom(room_name=room_dict["room_name"], room_type=room_dict["room_type"], owner_alias=room_dict["owner_alias"], member_list=room_dict["member_list"], create_new=False)
-            self.__room_list.append(new_room)
+        self.__name = list_data['list_name']
+        self.__list_id = list_data['_id']
+        self.__create_time = list_data['create_time']
+        self.__modify_time = list_data['modify_time']
+        self.__rooms_metadata = list_data['rooms_metadata']
+        for room_dict in self.__rooms_metadata:
+            if (new_room := ChatRoom(room_name=room_dict['room_name'], owner_alias=room_dict['owner_alias'], member_list=room_dict['member_list'], room_type=room_dict['room_type'], create_new=False)) is None:
+                new_room = self.create(room_name=room_dict['room_name'], owner_alias=room_dict['owner_alias'], member_list=room_dict['member_list'], room_type=room_dict['room_type'])
+            self.add(new_room=new_room)
         LOGGER.info("Done restoring room list from Mongo")
         return True
 

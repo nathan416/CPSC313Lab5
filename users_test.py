@@ -3,6 +3,7 @@ from unittest import TestCase
 from constants import *
 from users import *
 
+LOGGER = logging.getLogger(__name__)
 
 class UserTest(TestCase):
     """ Docstring

@@ -14,6 +14,7 @@ import pprint as pp
 MESSAGES = ["first"]
 NUM_MESSAGES = 4
 
+LOGGER = logging.getLogger(__name__)
 
 class TestChatRoomAPI(unittest.TestCase):
     """ Test client for API testing.

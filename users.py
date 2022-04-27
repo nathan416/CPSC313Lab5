@@ -4,6 +4,7 @@ from datetime import date, datetime
 from pymongo import MongoClient
 from constants import *
 
+LOGGER = logging.getLogger(__name__)
 
 class ChatUser():
     """ class for users of the chat system. Users must be registered 
@@ -181,7 +182,7 @@ class UserList():
         LOGGER.warning(f"User {target_alias} not found")
         return None
 
-    def get_all_user_aliases(self) -> list:
+    def get_all_users(self) -> list:
         alias_list = []
         for user in self.user_list:
             if not user.removed:
@@ -240,7 +241,7 @@ class UserList():
                     "create_time": self.__create_time,
                     "modify_time": self.__modify_time,
                 }, upsert=True)
-                self.dirty = False
+                self.__dirty = False
         for user in self.__user_list:
             if user.dirty:
                 if self.__mongo_collection.find_one({'alias': user.alias}) is None:
