@@ -20,6 +20,7 @@ from room import *
 from users import *
 
 LOGGER = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format=LOG_FORMAT, filename='room_chat_test.log')
 
 app = fa.FastAPI()
 room_list = RoomList()
@@ -129,7 +130,6 @@ async def read_users_me(current_user: ChatUser = Depends(get_current_active_user
 @app.get("/")
 async def index(token: str = Depends(oauth2_scheme)):
     return {"token": token}
-#    return {"message": {"from": "dan", "to": "you"}}
 
 
 @app.get("/items/")
@@ -137,13 +137,9 @@ async def read_items(token: str = Depends(oauth2_scheme)):
     return {"token": token}
 
 
-@app.get("/")
-def index():
-    pass
-
 
 @app.get("/messages", status_code=200)
-def receive_messages(room_name: str, messages_to_get: int):
+def receive_messages(request: Request, alias: str, room_name: str, messages_to_get: int = -1):
     """api endpoint to get messages from the MongoDB server
 
     Args:
@@ -153,29 +149,26 @@ def receive_messages(room_name: str, messages_to_get: int):
     Returns:
         list: list of ChatMessages
     """
-    chat_room = room_list.get(room_name)
-    return chat_room.get_messages(USER_ALIAS, num_messages=messages_to_get, return_objects=False)
-
-
-@app.post("/send", status_code=200)
-def send_message(room_name: str, message: str, from_alias: str):
-    """api endpoint to send messages to the ChatRoom
-
-    Args:
-        room_name (str): name of the room
-        message (str): message content
-        from_alias (str): name of sender
-        to_alias (str): name of receiver
-
-    Returns:
-        str: message input
-    """
-    chat_room = room_list.get(room_name)
-    chat_room.send_message(message, from_alias)
-    return message
+    LOGGER.info("starting GET MESSAGES")
+    if (room_instance := room_list.get(room_name=room_name)) is None:
+        LOGGER.debug(f'in GET MESSAGES - ROOM DOES NOT EXIST: {room_name}')
+        return JSONResponse(status_code=450, content=f"Room {room_name} does not exist")
+    if users.get(alias) is None:
+        LOGGER.debug(f'in GET MESSAGES - ALIAS DOES NOT EXIST: {alias}')
+        return JSONResponse(status_code=455, content=f'alias {alias} does not exist')
+    if alias not in room_instance.member_list:
+        LOGGER.debug(f'in GET MESSAGES - ALIAS: {alias} is not part of ROOM: {room_name}')
+        return JSONResponse(status_code=445, content=f'alias {alias} is not a member of room {room_name}')
+    messages, message_objects, total_mess = room_instance.get_messages(user_alias=alias, num_messages=messages_to_get, return_objects=True)
+    LOGGER.debug(f'in GET MESSAGES - after getting messages for room: {room_name}\n messages are {messages}')
+    for message in message_objects:
+        LOGGER.debug(f'GET MESSAGES - Message: {message.message} == message props: {message.mess_props} host is {request.client.host}')
+        LOGGER.debug(request.json())
+    LOGGER.info("End GET MESSAGES")
+    return messages
 
 @app.post("/message", status_code=201)
-async def send_message(request: Request, room_name: str, message: str, from_alias: str):
+async def send_message(request: Request, room_name: str, message: str, from_alias: str, to_alias: str):
     """send message api call
 
     Args:
@@ -200,27 +193,59 @@ async def send_message(request: Request, room_name: str, message: str, from_alia
         LOGGER.debug(f'In POST MESSAGE - PROBLEMS: {message} == room is {room_name}')
         return JSONResponse(status_code=410, content="Problems")
 
+@app.get("/room/members", status_code=200)
+async def get_room_members(request: Request, alias: str, room_name: str, messages_to_get: int = -1):
+    """ Docstring
+    """
+    LOGGER.info("starting GET ROOM MEMBERS")
+    if (room_instance := room_list.get(room_name=room_name)) is None:
+        LOGGER.debug(f'in ROOM MEMBERS - ROOM DOES NOT EXIST: {room_name}')
+        return JSONResponse(status_code=450, content=f"Room {room_name} does not exist")
+    if users.get(alias) is None:
+        LOGGER.debug(f'in ROOM MEMBERS - ALIAS DOES NOT EXIST: {alias}')
+        return JSONResponse(status_code=455, content=f'alias {alias} does not exist')
+    if alias not in room_instance.member_list:
+        LOGGER.debug(f'in ROOM MEMBERS - ALIAS: {alias} is not part of ROOM: {room_name}')
+        return JSONResponse(status_code=445, content=f'alias {alias} is not a member of room {room_name}')
+    messages, message_objects, total_mess = room_instance.get_messages(user_alias=alias, num_messages=messages_to_get, return_objects=True)
+    LOGGER.debug(f'in GET MESSAGES - after getting messages for room: {room_name}\n messages are {messages}')
+    for message in message_objects:
+        LOGGER.debug(f'GET MESSAGES - Message: {message.message} == message props: {message.mess_props} host is {request.client.host}')
+        LOGGER.debug(request.json())
+    LOGGER.info("End GET MESSAGES")
+    return messages
 
 @app.get("/users/", status_code=200)
-async def get_users():
-    """ API for getting users
-    """
-    user_list = users.get_all_users()
-    user_str_list = []
-    for user in user_list:
-        user_str_list.append(user.alias)
-    return user_str_list
+async def get_users(request: Request):
+    cur_users = users.get_all_users() 
+    if len(cur_users) > 0:
+        LOGGER.debug(f'In GET USERS - SUCCESS: {cur_users}')
+        return cur_users
+    else:
+        LOGGER.debug(f'In GET USERS - NO USERS: {cur_users}')
+        return JSONResponse(status_code=405, content="No users have been registered")
 
 
-@app.post("/alias", status_code=201)
-async def register_client(client_alias: str, group_alias: bool = False):
+@app.post("/users/alias", status_code=201)
+async def register_client(request: Request, alias: str):
     """ API for adding a user alias
     """
-    users.register(client_alias)
+    users.register(alias)
 
+@app.post("/users/remove_alias", status_code=201)
+async def deregister_client(request: Request, client_alias: str):
+    """ Docstring
+    """
+    if users.get(client_alias) is not None:
+        users.deregister(client_alias)
+        LOGGER.debug(f'In POST REMOVE ALIAS - SUCCESS: {client_alias}')
+        return "success"
+    else:
+        LOGGER.debug(f'In POST REMOVE ALIAS - USER DOESNT EXIST: {client_alias}')
+        return Response(status_code=410, content="User doesn't exist")
 
 @app.post("/room", status_code=201)
-async def create_room(room_name: str, owner_alias: str, room_type: int = ROOM_TYPE_PUBLIC):
+async def create_room(request: Request, room_name: str, owner_alias: str, room_type: int = ROOM_TYPE_PUBLIC):
     """ API for creating a room
     """
     chat_room = ChatRoom(room_name, [], owner_alias, room_type, True)

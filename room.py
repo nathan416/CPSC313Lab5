@@ -344,7 +344,7 @@ class ChatRoom(deque):
                 message.dirty = False
 
     @STATSCLIENT.timer('get_messages')
-    def get_messages(self, user_alias: str, num_messages: int = 0, return_objects: bool=False) -> tuple:  # list of ChatMessage
+    def get_messages(self, user_alias: str, num_messages: int = -1, return_objects: bool=False) -> tuple:  # list of ChatMessage
         """ get a list of messages or message objects
             gets the messages from the right of the deque and doesnt display them if the sender
             of the message is in the owner's blacklist
@@ -361,7 +361,9 @@ class ChatRoom(deque):
             return [], [], 0
         message_list = []
         message_objects = []
-
+        if num_messages < 0:
+            num_messages = 0
+        
         for message in list(self)[-num_messages:]:
             if (user := self.__user_list.get(user_alias)) is not None:
                 if message.mess_props.from_user in user.blacklist:
